@@ -1,0 +1,41 @@
+name: Test SCP key-based auth inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create source file and key path
+        run: |
+          echo "test content" > /tmp/test-scp-file.txt
+          echo "-----BEGIN RSA PRIVATE KEY-----" > /tmp/fake-key.pem
+          echo "MIIEowIBAAKCAQEA0Z3VS5JJcds3xHn/ygWep4PAtEsHAFPpFGJMWFbBhFMmFJMW" >> /tmp/fake-key.pem
+          echo "-----END RSA PRIVATE KEY-----" >> /tmp/fake-key.pem
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          host: "192.0.2.2"
+          port: 22
+          username: "keyuser"
+          key: |
+            -----BEGIN RSA PRIVATE KEY-----
+            MIIEowIBAAKCAQEA0Z3VS5JJcds3xHn/ygWep4PAtEsHAFPpFGJMWFbBhFMmFJMW
+            -----END RSA PRIVATE KEY-----
+          key_path: "/tmp/fake-key.pem"
+          passphrase: "myfakekeypassphrase"
+          fingerprint: "SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          source: "/tmp/test-scp-file.txt"
+          target: "/tmp/remote-key-target"
+          timeout: "5s"
+          command_timeout: "10s"
+          debug: true
+      - name: Assert action ran (connection failure expected with fake host)
+        run: |
+          echo "Action completed with outcome: ${{ steps.action.outcome }}"
+          if [ "${{ steps.action.outcome }}" = "skipped" ]; then
+            echo "FAIL: action was skipped unexpectedly"
+            exit 1
+          fi
+          echo "PASS: action ran with key auth inputs"

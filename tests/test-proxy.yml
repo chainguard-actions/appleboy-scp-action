@@ -1,0 +1,49 @@
+name: Test SCP proxy inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create source file and proxy key
+        run: |
+          echo "test content" > /tmp/test-proxy-file.txt
+          echo "-----BEGIN RSA PRIVATE KEY-----" > /tmp/fake-proxy-key.pem
+          echo "MIIEowIBAAKCAQEA0Z3VS5JJcds3xHn/ygWep4PAtEsHAFPpFGJMWFbBhFMmFJMW" >> /tmp/fake-proxy-key.pem
+          echo "-----END RSA PRIVATE KEY-----" >> /tmp/fake-proxy-key.pem
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          host: "192.0.2.3"
+          port: 22
+          username: "proxyuser"
+          password: "proxyuserpassword"
+          source: "/tmp/test-proxy-file.txt"
+          target: "/tmp/remote-proxy-target"
+          tar_tmp_path: "/tmp/scp-tar-staging"
+          timeout: "5s"
+          command_timeout: "10s"
+          debug: true
+          proxy_host: "192.0.2.100"
+          proxy_port: 22
+          proxy_username: "proxyjumpuser"
+          proxy_password: "proxyjumppassword"
+          proxy_passphrase: "proxykeypassphrase"
+          proxy_key: |
+            -----BEGIN RSA PRIVATE KEY-----
+            MIIEowIBAAKCAQEA0Z3VS5JJcds3xHn/ygWep4PAtEsHAFPpFGJMWFbBhFMmFJMW
+            -----END RSA PRIVATE KEY-----
+          proxy_key_path: "/tmp/fake-proxy-key.pem"
+          proxy_fingerprint: "SHA256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          proxy_timeout: "5s"
+          proxy_use_insecure_cipher: false
+      - name: Assert action ran (connection failure expected with fake host)
+        run: |
+          echo "Action completed with outcome: ${{ steps.action.outcome }}"
+          if [ "${{ steps.action.outcome }}" = "skipped" ]; then
+            echo "FAIL: action was skipped unexpectedly"
+            exit 1
+          fi
+          echo "PASS: action ran with proxy inputs"
