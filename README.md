@@ -1,6 +1,6 @@
 # appleboy/scp-action
 
-How to Use SCP Command to Transfer Files/Folders in Linux
+Easily transfer files and folders using the SCP command in Linux.
 
 Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at [https://github.com/appleboy/scp-action](https://github.com/appleboy/scp-action).
 
@@ -8,6 +8,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 
 | Version | Tag | Upstream commit |
 |---------|-----|-----------------|
+| v0.1.4 | [`v0.1.4`](https://github.com/chainguard-actions/appleboy-scp-action/tree/v0.1.4) | [`8a92fcd`](https://github.com/appleboy/scp-action/commit/8a92fcdb1eb4ffbf538b2fa286739760aac8a95b) |
 | v0.1.7 | [`v0.1.7`](https://github.com/chainguard-actions/appleboy-scp-action/tree/v0.1.7) | [`917f8b8`](https://github.com/appleboy/scp-action/commit/917f8b81dfc1ccd331fef9e2d61bdc6c8be94634) |
 
 ## Privacy
