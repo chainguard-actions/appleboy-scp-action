@@ -1,0 +1,45 @@
+name: Test SCP with SSH proxy
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create source file and dummy proxy key files
+        run: |
+          echo "proxy test content" > /tmp/test-proxy-upload.txt
+          echo "-----BEGIN RSA PRIVATE KEY-----" > /tmp/dummy_proxy_key
+          echo "dummyproxykeydata" >> /tmp/dummy_proxy_key
+          echo "-----END RSA PRIVATE KEY-----" >> /tmp/dummy_proxy_key
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          host: "192.0.2.3"
+          port: 22
+          username: "proxyuser"
+          password: "targetpassword"
+          source: "/tmp/test-proxy-upload.txt"
+          target: "/tmp/remote-proxy-target"
+          timeout: "5s"
+          command_timeout: "30s"
+          debug: true
+          proxy_host: "192.0.2.4"
+          proxy_port: 22
+          proxy_username: "proxyjumpuser"
+          proxy_password: "proxypassword"
+          proxy_passphrase: "proxypassphrase"
+          proxy_key: "-----BEGIN RSA PRIVATE KEY-----\ndummyproxykeydata\n-----END RSA PRIVATE KEY-----"
+          proxy_key_path: "/tmp/dummy_proxy_key"
+          proxy_fingerprint: "SHA256:dummyproxyfingerprint1234567890abcdefghijklmnopqr"
+          proxy_timeout: "5s"
+          proxy_use_insecure_cipher: false
+      - name: Assert action ran (connection failure expected for unreachable hosts)
+        run: |
+          echo "Action outcome: ${{ steps.action.outcome }}"
+          if [ "${{ steps.action.outcome }}" = "skipped" ]; then
+            echo "FAIL: action was skipped, expected it to run"
+            exit 1
+          fi
+          echo "PASS: action ran (connection failure is expected for dummy proxy host)"
