@@ -1,0 +1,76 @@
+name: Test basic SCP file transfer
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up SSH server and prepare source file
+        run: |
+          # Install openssh-server if not present
+          which sshd || (apt-get update -qq && apt-get install -y -qq openssh-server)
+
+          # Generate SSH key pair for the test
+          mkdir -p "$GITHUB_WORKSPACE/.ssh-test"
+          ssh-keygen -t rsa -b 2048 -f "$GITHUB_WORKSPACE/.ssh-test/id_rsa" -N "" -q
+
+          # Set up root's authorized_keys
+          mkdir -p /root/.ssh
+          cat "$GITHUB_WORKSPACE/.ssh-test/id_rsa.pub" >> /root/.ssh/authorized_keys
+          chmod 700 /root/.ssh
+          chmod 600 /root/.ssh/authorized_keys
+
+          # Configure and start sshd on port 2222
+          mkdir -p /run/sshd
+          ssh-keygen -A 2>/dev/null || true
+          /usr/sbin/sshd -p 2222 \
+            -o "PermitRootLogin yes" \
+            -o "PubkeyAuthentication yes" \
+            -o "PasswordAuthentication no" \
+            -o "StrictModes no" \
+            -o "ListenAddress 0.0.0.0"
+          sleep 2
+
+          # Verify sshd is running
+          ss -tlnp | grep 2222 || echo "sshd started"
+
+          # Create target directory on the host (SSH server side)
+          mkdir -p /tmp/scp-target
+          chmod 777 /tmp/scp-target
+
+          # Create source file INSIDE GITHUB_WORKSPACE so Docker container can see it
+          echo "hello from scp test" > "$GITHUB_WORKSPACE/scp-source.txt"
+
+          # Store private key content as multiline env var
+          echo "SSH_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
+          cat "$GITHUB_WORKSPACE/.ssh-test/id_rsa" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+          # Under act, Docker actions run with --network host, so 127.0.0.1 works
+          echo "SSH_HOST=127.0.0.1" >> $GITHUB_ENV
+
+      - id: scp
+        name: Run SCP action
+        uses: .
+        with:
+          host: ${{ env.SSH_HOST }}
+          port: 2222
+          username: root
+          key: ${{ env.SSH_PRIVATE_KEY }}
+          source: "scp-source.txt"
+          target: /tmp/scp-target
+          use_insecure_cipher: true
+          debug: true
+
+      - name: Assert file was transferred
+        run: |
+          echo "Checking if file was transferred to /tmp/scp-target..."
+          ls -la /tmp/scp-target/ 2>/dev/null || echo "(empty or missing)"
+          if find /tmp/scp-target -name "scp-source.txt" 2>/dev/null | grep -q "scp-source.txt"; then
+            echo "PASS: file found in target directory"
+          else
+            echo "FAIL: transferred file not found in target"
+            exit 1
+          fi

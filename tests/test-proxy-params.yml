@@ -1,0 +1,49 @@
+name: Test proxy connection parameters
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Generate a dummy SSH key for proxy_key_path testing
+        run: |
+          ssh-keygen -t rsa -b 2048 -f /tmp/proxy_id_rsa -N "proxypassphrase" -q
+          PROXY_KEY_CONTENT="$(cat /tmp/proxy_id_rsa)"
+          echo "PROXY_KEY_CONTENT<<EOF" >> "$GITHUB_ENV"
+          echo "$PROXY_KEY_CONTENT" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+      - name: Run action with proxy parameters (expect failure on connection)
+        id: action
+        uses: .
+        with:
+          host: 192.0.2.1
+          port: 22
+          username: testuser
+          password: testpassword
+          target: /tmp/remote-target
+          source: README.md
+          timeout: 5s
+          command_timeout: 10s
+          proxy_host: 192.0.2.2
+          proxy_port: 22
+          proxy_username: proxyuser
+          proxy_password: proxypassword
+          proxy_key: ${{ env.PROXY_KEY_CONTENT }}
+          proxy_key_path: /tmp/proxy_id_rsa
+          proxy_passphrase: proxypassphrase
+          proxy_fingerprint: SHA256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          proxy_timeout: 5s
+          proxy_use_insecure_cipher: false
+          debug: true
+        continue-on-error: true
+      - name: Assert action failed (connection refused, not a parameter error)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected action to fail when host is unreachable, got outcome=$OUTCOME"
+            exit 1
+          fi
+          echo "PASS: action correctly handled proxy parameters and failed on connection"

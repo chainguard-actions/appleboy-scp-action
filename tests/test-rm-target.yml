@@ -1,0 +1,84 @@
+name: Test SCP with rm flag (remove target before upload)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up SSH server and prepare files
+        run: |
+          # Install openssh-server if not present
+          which sshd || (apt-get update -qq && apt-get install -y -qq openssh-server)
+
+          # Generate SSH key pair for the test
+          mkdir -p "$GITHUB_WORKSPACE/.ssh-test"
+          ssh-keygen -t rsa -b 2048 -f "$GITHUB_WORKSPACE/.ssh-test/id_rsa" -N "" -q
+
+          # Set up root's authorized_keys
+          mkdir -p /root/.ssh
+          cat "$GITHUB_WORKSPACE/.ssh-test/id_rsa.pub" >> /root/.ssh/authorized_keys
+          chmod 700 /root/.ssh
+          chmod 600 /root/.ssh/authorized_keys
+
+          # Configure and start sshd on port 2222
+          mkdir -p /run/sshd
+          ssh-keygen -A 2>/dev/null || true
+          /usr/sbin/sshd -p 2222 \
+            -o "PermitRootLogin yes" \
+            -o "PubkeyAuthentication yes" \
+            -o "PasswordAuthentication no" \
+            -o "StrictModes no" \
+            -o "ListenAddress 0.0.0.0"
+          sleep 2
+
+          # Create target directory with an existing old file (to be removed by rm=true)
+          mkdir -p /tmp/scp-rm-target
+          chmod 777 /tmp/scp-rm-target
+          echo "old content" > /tmp/scp-rm-target/old-file.txt
+
+          # Create source file INSIDE GITHUB_WORKSPACE so Docker container can see it
+          echo "new content" > "$GITHUB_WORKSPACE/scp-new-file.txt"
+
+          # Store private key content as multiline env var
+          echo "SSH_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
+          cat "$GITHUB_WORKSPACE/.ssh-test/id_rsa" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+          # Under act, Docker actions run with --network host, so 127.0.0.1 works
+          echo "SSH_HOST=127.0.0.1" >> $GITHUB_ENV
+
+      - id: scp
+        name: Run SCP action with rm=true
+        uses: .
+        with:
+          host: ${{ env.SSH_HOST }}
+          port: 2222
+          username: root
+          key: ${{ env.SSH_PRIVATE_KEY }}
+          source: "scp-new-file.txt"
+          target: /tmp/scp-rm-target
+          rm: true
+          use_insecure_cipher: true
+          debug: true
+
+      - name: Assert old file was removed and new file exists
+        run: |
+          echo "Checking target directory contents..."
+          ls -la /tmp/scp-rm-target/ 2>/dev/null || echo "(directory missing)"
+
+          # The old file should be gone (rm=true removes target before upload)
+          if [ -f /tmp/scp-rm-target/old-file.txt ]; then
+            echo "FAIL: old-file.txt still exists after rm=true"
+            exit 1
+          fi
+          echo "PASS: old file was removed"
+
+          # The new file should be present
+          if find /tmp/scp-rm-target -name "scp-new-file.txt" 2>/dev/null | grep -q "scp-new-file.txt"; then
+            echo "PASS: new file was transferred"
+          else
+            echo "FAIL: new file not found in target"
+            exit 1
+          fi

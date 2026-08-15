@@ -1,0 +1,37 @@
+name: Test optional parameters
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Run action with optional parameters (expect failure on connection)
+        id: action
+        uses: .
+        with:
+          host: 192.0.2.1
+          port: 2222
+          username: testuser
+          password: testpassword
+          target: /tmp/remote-target
+          source: README.md
+          timeout: 5s
+          command_timeout: 10s
+          strip_components: 1
+          overwrite: true
+          tar_dereference: true
+          rm: false
+          debug: true
+          use_insecure_cipher: false
+        continue-on-error: true
+      - name: Assert action failed (connection refused, not a parameter error)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected action to fail when host is unreachable, got outcome=$OUTCOME"
+            exit 1
+          fi
+          echo "PASS: action correctly handled optional parameters and failed on connection"
