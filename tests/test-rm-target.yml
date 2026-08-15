@@ -1,4 +1,4 @@
-name: Test basic SCP file transfer
+name: Test SCP with rm (remove target before upload)
 on:
   workflow_dispatch:
 
@@ -32,15 +32,13 @@ jobs:
           sudo /usr/sbin/sshd -p 2222 -D &
           sleep 3
 
-          # Verify sshd is running
-          sudo ss -tlnp | grep :2222 || true
+          # Create a target directory with a pre-existing file that should be removed
+          mkdir -p /tmp/scp-rm-target
+          chmod 777 /tmp/scp-rm-target
+          echo "old file that should be removed" > /tmp/scp-rm-target/old-file.txt
 
-          # Create a target directory on the "remote" host (localhost)
-          mkdir -p /tmp/scp-target
-          chmod 777 /tmp/scp-target
-
-          # Create a source file INSIDE the workspace so Docker can access it
-          echo "hello from scp action test" > "$GITHUB_WORKSPACE/test-source.txt"
+          # Create source file INSIDE the workspace so Docker can access it
+          echo "new file content" > "$GITHUB_WORKSPACE/new-file.txt"
 
           # Store the private key content for the action
           echo "SSH_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
@@ -48,7 +46,6 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
 
           # Get the host IP reachable from inside Docker container
-          # Under act, the Docker container uses the gateway IP to reach the host
           HOST_IP=$(ip route | awk '/default/ {print $3}' | head -1)
           if [ -z "$HOST_IP" ]; then
             HOST_IP="172.17.0.1"
@@ -59,29 +56,46 @@ jobs:
           # Get the current username
           echo "SSH_USER=$(whoami)" >> $GITHUB_ENV
 
+      - name: Verify old file exists before action
+        run: |
+          if [ ! -f "/tmp/scp-rm-target/old-file.txt" ]; then
+            echo "FAIL: pre-existing file should exist before action runs"
+            exit 1
+          fi
+          echo "Pre-existing file confirmed: /tmp/scp-rm-target/old-file.txt"
+
       - id: scp
-        name: Run SCP action
+        name: Run SCP action with rm=true
         uses: .
         with:
           host: ${{ env.HOST_IP }}
           port: 2222
           username: ${{ env.SSH_USER }}
           key: ${{ env.SSH_PRIVATE_KEY }}
-          source: "test-source.txt"
-          target: /tmp/scp-target
+          source: "new-file.txt"
+          target: /tmp/scp-rm-target
+          rm: true
           debug: true
           timeout: 30s
           command_timeout: 2m
           use_insecure_cipher: true
 
-      - name: Assert file was transferred
+      - name: Assert new file transferred and old file removed
         run: |
-          echo "Checking if file was transferred to /tmp/scp-target..."
-          echo "Contents of /tmp/scp-target:"
-          find /tmp/scp-target -type f 2>/dev/null || echo "(empty)"
-          if find /tmp/scp-target -name "test-source.txt" | grep -q .; then
-            echo "PASS: file was successfully transferred"
+          echo "Contents of /tmp/scp-rm-target:"
+          find /tmp/scp-rm-target -type f 2>/dev/null || echo "(empty)"
+
+          # Check new file is present
+          if find /tmp/scp-rm-target -name "new-file.txt" | grep -q .; then
+            echo "PASS: new file was transferred successfully"
           else
-            echo "FAIL: expected transferred file not found"
+            echo "FAIL: new file was not transferred"
             exit 1
           fi
+
+          # Check old file is gone (rm=true should have removed the target dir first)
+          if [ -f "/tmp/scp-rm-target/old-file.txt" ]; then
+            echo "FAIL: old file should have been removed by rm=true"
+            exit 1
+          fi
+          echo "PASS: old file was removed as expected"

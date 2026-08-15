@@ -1,0 +1,39 @@
+name: Test SCP with key_path, passphrase, fingerprint, and tar_tmp_path
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Generate a temporary SSH key for testing
+        run: |
+          ssh-keygen -t rsa -b 2048 -f /tmp/test_key -N "testpassphrase" -q
+          echo "SSH key generated at /tmp/test_key"
+
+      - name: Test action with key_path, passphrase, fingerprint, tar_tmp_path (expect failure - no real server)
+        id: action
+        uses: .
+        continue-on-error: true
+        with:
+          host: "192.0.2.1"
+          port: 22
+          username: "testuser"
+          key_path: "/tmp/test_key"
+          passphrase: "testpassphrase"
+          fingerprint: "SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          target: "/tmp/remote-target"
+          source: "README.md"
+          tar_tmp_path: "/tmp/tar-staging"
+          timeout: "5s"
+          command_timeout: "10s"
+
+      - name: Assert action failed (no real SSH server available)
+        run: |
+          echo "outcome: ${{ steps.action.outcome }}"
+          if [ "${{ steps.action.outcome }}" = "success" ]; then
+            echo "FAIL: expected action to fail (no real SSH server)"
+            exit 1
+          fi
+          echo "PASS: action correctly failed when no SSH server is available"

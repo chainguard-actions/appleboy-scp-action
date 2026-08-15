@@ -1,4 +1,4 @@
-name: Test basic SCP file transfer
+name: Test SCP with strip_components
 on:
   workflow_dispatch:
 
@@ -32,15 +32,13 @@ jobs:
           sudo /usr/sbin/sshd -p 2222 -D &
           sleep 3
 
-          # Verify sshd is running
-          sudo ss -tlnp | grep :2222 || true
+          # Create nested source directory structure INSIDE the workspace
+          mkdir -p "$GITHUB_WORKSPACE/src/subdir"
+          echo "nested file content" > "$GITHUB_WORKSPACE/src/subdir/nested.txt"
 
           # Create a target directory on the "remote" host (localhost)
-          mkdir -p /tmp/scp-target
-          chmod 777 /tmp/scp-target
-
-          # Create a source file INSIDE the workspace so Docker can access it
-          echo "hello from scp action test" > "$GITHUB_WORKSPACE/test-source.txt"
+          mkdir -p /tmp/scp-strip-target
+          chmod 777 /tmp/scp-strip-target
 
           # Store the private key content for the action
           echo "SSH_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
@@ -48,7 +46,6 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
 
           # Get the host IP reachable from inside Docker container
-          # Under act, the Docker container uses the gateway IP to reach the host
           HOST_IP=$(ip route | awk '/default/ {print $3}' | head -1)
           if [ -z "$HOST_IP" ]; then
             HOST_IP="172.17.0.1"
@@ -60,28 +57,30 @@ jobs:
           echo "SSH_USER=$(whoami)" >> $GITHUB_ENV
 
       - id: scp
-        name: Run SCP action
+        name: Run SCP action with strip_components=2
         uses: .
         with:
           host: ${{ env.HOST_IP }}
           port: 2222
           username: ${{ env.SSH_USER }}
           key: ${{ env.SSH_PRIVATE_KEY }}
-          source: "test-source.txt"
-          target: /tmp/scp-target
+          source: "src/subdir/nested.txt"
+          target: /tmp/scp-strip-target
+          strip_components: 2
           debug: true
           timeout: 30s
           command_timeout: 2m
           use_insecure_cipher: true
 
-      - name: Assert file was transferred
+      - name: Assert file was transferred with stripped path
         run: |
-          echo "Checking if file was transferred to /tmp/scp-target..."
-          echo "Contents of /tmp/scp-target:"
-          find /tmp/scp-target -type f 2>/dev/null || echo "(empty)"
-          if find /tmp/scp-target -name "test-source.txt" | grep -q .; then
-            echo "PASS: file was successfully transferred"
+          echo "Checking if file was transferred with stripped path..."
+          echo "Contents of /tmp/scp-strip-target:"
+          find /tmp/scp-strip-target -type f 2>/dev/null || echo "(empty)"
+          # With strip_components=2, src/subdir/nested.txt -> nested.txt
+          if [ -f "/tmp/scp-strip-target/nested.txt" ]; then
+            echo "PASS: file was transferred with path components stripped"
           else
-            echo "FAIL: expected transferred file not found"
+            echo "FAIL: expected stripped file not found at /tmp/scp-strip-target/nested.txt"
             exit 1
           fi

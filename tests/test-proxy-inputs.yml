@@ -1,0 +1,44 @@
+name: Test SCP with proxy inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Generate temporary SSH keys for testing
+        run: |
+          ssh-keygen -t rsa -b 2048 -f /tmp/proxy_key -N "proxypassphrase" -q
+          echo "Proxy SSH key generated at /tmp/proxy_key"
+
+      - name: Test action with proxy inputs (expect failure - no real server)
+        id: action
+        uses: .
+        continue-on-error: true
+        with:
+          host: "192.0.2.1"
+          port: 22
+          username: "testuser"
+          password: "testpassword"
+          target: "/tmp/remote-target"
+          source: "README.md"
+          timeout: "5s"
+          command_timeout: "10s"
+          proxy_host: "192.0.2.2"
+          proxy_port: 22
+          proxy_username: "proxyuser"
+          proxy_password: "proxypassword"
+          proxy_key: "-----BEGIN RSA PRIVATE KEY-----\nfakekey\n-----END RSA PRIVATE KEY-----"
+          proxy_key_path: "/tmp/proxy_key"
+          proxy_passphrase: "proxypassphrase"
+          proxy_fingerprint: "SHA256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+      - name: Assert action failed (no real SSH proxy server available)
+        run: |
+          echo "outcome: ${{ steps.action.outcome }}"
+          if [ "${{ steps.action.outcome }}" = "success" ]; then
+            echo "FAIL: expected action to fail (no real SSH proxy server)"
+            exit 1
+          fi
+          echo "PASS: action correctly failed when no SSH proxy server is available"
