@@ -1,0 +1,119 @@
+name: Test SCP transfer to local SSH server
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up local SSH server with key auth
+        run: |
+          set -e
+
+          # Install openssh-server
+          apt-get update -qq && apt-get install -y -qq openssh-server
+
+          # Generate host keys
+          ssh-keygen -A
+
+          # Generate SSH key pair for authentication
+          ssh-keygen -t rsa -b 2048 -f /tmp/scp_test_key -N "" -q
+
+          # Create test user (ignore error if already exists)
+          useradd -m -s /bin/bash sshtest 2>/dev/null || true
+
+          # Set up authorized_keys for sshtest user
+          mkdir -p /home/sshtest/.ssh
+          cat /tmp/scp_test_key.pub > /home/sshtest/.ssh/authorized_keys
+          chmod 700 /home/sshtest/.ssh
+          chmod 600 /home/sshtest/.ssh/authorized_keys
+          chown -R sshtest:sshtest /home/sshtest/.ssh
+
+          # Create target directory with proper permissions
+          mkdir -p /home/sshtest/upload
+          chmod 777 /home/sshtest/upload
+          chown sshtest:sshtest /home/sshtest/upload
+
+          # Ensure /run/sshd exists
+          mkdir -p /run/sshd
+
+          # Start SSH server on port 2222
+          /usr/sbin/sshd -p 2222 \
+            -o "PasswordAuthentication=no" \
+            -o "PubkeyAuthentication=yes" \
+            -o "StrictModes=no" \
+            -o "AuthorizedKeysFile=/home/sshtest/.ssh/authorized_keys" \
+            -o "PidFile=/tmp/sshd_test.pid"
+
+          echo "sshd started, waiting for it to be ready..."
+
+          # Wait for SSH to be ready with retries
+          SSH_READY=false
+          for i in $(seq 1 15); do
+            if ssh -i /tmp/scp_test_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=3 \
+              -p 2222 \
+              sshtest@127.0.0.1 \
+              "echo SSH connection successful" 2>/dev/null; then
+              SSH_READY=true
+              echo "SSH server is ready after $i attempt(s)"
+              break
+            fi
+            echo "Waiting for SSH server... attempt $i"
+            sleep 1
+          done
+
+          if [ "$SSH_READY" != "true" ]; then
+            echo "ERROR: SSH server did not become ready"
+            exit 1
+          fi
+
+      - name: Create source file to transfer
+        run: |
+          echo "test content from SCP action" > /tmp/scp-test-file.txt
+
+      - id: action
+        name: Run SCP action to transfer file
+        uses: .
+        with:
+          host: "127.0.0.1"
+          port: "2222"
+          username: "sshtest"
+          key_path: "/tmp/scp_test_key"
+          source: "/tmp/scp-test-file.txt"
+          target: "/home/sshtest/upload"
+          timeout: "30s"
+          command_timeout: "60s"
+
+      - name: Assert file was transferred
+        run: |
+          echo "Checking if file was transferred..."
+          echo "Contents of /home/sshtest/upload/ (recursive):"
+          find /home/sshtest/upload/ -type f 2>/dev/null || echo "(empty or not found)"
+
+          # drone-scp uses tar and may preserve path structure.
+          # Source /tmp/scp-test-file.txt may be extracted as:
+          # - /home/sshtest/upload/tmp/scp-test-file.txt (full path preserved)
+          # - /home/sshtest/upload/scp-test-file.txt (basename only)
+          FOUND=false
+          for CHECK_PATH in \
+            "/home/sshtest/upload/tmp/scp-test-file.txt" \
+            "/home/sshtest/upload/scp-test-file.txt"; do
+            if [ -f "$CHECK_PATH" ]; then
+              CONTENT=$(cat "$CHECK_PATH")
+              echo "File found at: $CHECK_PATH"
+              echo "File content: $CONTENT"
+              if [ "$CONTENT" = "test content from SCP action" ]; then
+                echo "PASS: file was successfully transferred"
+                FOUND=true
+                break
+              fi
+            fi
+          done
+
+          if [ "$FOUND" != "true" ]; then
+            echo "FAIL: expected file not found in /home/sshtest/upload/"
+            exit 1
+          fi

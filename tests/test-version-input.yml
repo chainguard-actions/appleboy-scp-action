@@ -1,0 +1,67 @@
+name: Test version input for drone-scp binary
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up fake drone-scp binary and test files
+        run: |
+          # The test uses version=1.8.0 (same as default, but explicitly set)
+          PLATFORM="linux"
+          ARCH="amd64"
+          VERSION="1.8.0"
+          BINARY_NAME="drone-scp-${VERSION}-${PLATFORM}-${ARCH}"
+
+          # Create the fake release directory structure
+          RELEASE_DIR="/tmp/fake-drone-scp-releases/v${VERSION}"
+          mkdir -p "$RELEASE_DIR"
+
+          # Copy the fake drone-scp script as the binary
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-drone-scp.sh" "$RELEASE_DIR/$BINARY_NAME"
+          chmod +x "$RELEASE_DIR/$BINARY_NAME"
+
+          # Set DRONE_SCP_RELEASE_URL for subsequent steps via GITHUB_ENV
+          echo "DRONE_SCP_RELEASE_URL=file:///tmp/fake-drone-scp-releases" >> "$GITHUB_ENV"
+
+          # Create test file to transfer
+          mkdir -p /tmp/sshtest/upload
+          echo "version test content" > /tmp/sshtest/version_test.txt
+
+          echo "Setup complete. Binary at: $RELEASE_DIR/$BINARY_NAME"
+          ls -la "$RELEASE_DIR/"
+
+      - id: action
+        name: Run SCP action with explicit version
+        uses: .
+        with:
+          host: "127.0.0.1"
+          port: "2222"
+          username: "root"
+          key_path: "/tmp/sshtest/id_rsa"
+          source: "/tmp/sshtest/version_test.txt"
+          target: "/tmp/sshtest/upload"
+          strip_components: "2"
+          version: "1.8.0"
+          timeout: "30s"
+          command_timeout: "2m"
+
+      - name: Assert file was transferred with specified version
+        run: |
+          echo "Checking if file was transferred using specified drone-scp version..."
+          echo "Contents of upload dir (recursive):"
+          find /tmp/sshtest/upload -type f || true
+          # With strip_components=2, /tmp/sshtest/version_test.txt -> version_test.txt
+          if [ ! -f "/tmp/sshtest/upload/version_test.txt" ]; then
+            echo "FAIL: version_test.txt not found in target directory"
+            exit 1
+          fi
+          CONTENT=$(cat /tmp/sshtest/upload/version_test.txt)
+          echo "actual content: $CONTENT"
+          if [ "$CONTENT" != "version test content" ]; then
+            echo "FAIL: unexpected file content"
+            exit 1
+          fi
+          echo "PASS: file transferred successfully using specified version 1.8.0"

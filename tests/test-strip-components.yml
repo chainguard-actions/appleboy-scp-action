@@ -1,0 +1,65 @@
+name: Test strip_components feature
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up fake drone-scp binary and test files
+        run: |
+          # Determine the binary name the entrypoint will request
+          PLATFORM="linux"
+          ARCH="amd64"
+          VERSION="1.8.0"
+          BINARY_NAME="drone-scp-${VERSION}-${PLATFORM}-${ARCH}"
+
+          # Create the fake release directory structure
+          RELEASE_DIR="/tmp/fake-drone-scp-releases/v${VERSION}"
+          mkdir -p "$RELEASE_DIR"
+
+          # Copy the fake drone-scp script as the binary
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-drone-scp.sh" "$RELEASE_DIR/$BINARY_NAME"
+          chmod +x "$RELEASE_DIR/$BINARY_NAME"
+
+          # Set DRONE_SCP_RELEASE_URL for subsequent steps via GITHUB_ENV
+          echo "DRONE_SCP_RELEASE_URL=file:///tmp/fake-drone-scp-releases" >> "$GITHUB_ENV"
+
+          # Create target directory
+          mkdir -p /tmp/sshtest/upload
+
+          # Create a nested test file to transfer (to test strip_components)
+          # Path: /tmp/sshtest/subdir/nested/stripped.txt
+          # With strip_components=4, strips: tmp(1), sshtest(2), subdir(3), nested(4) -> stripped.txt
+          mkdir -p /tmp/sshtest/subdir/nested
+          echo "strip components test" > /tmp/sshtest/subdir/nested/stripped.txt
+
+          echo "Setup complete. Binary at: $RELEASE_DIR/$BINARY_NAME"
+
+      - id: action
+        name: Run SCP action with strip_components=4
+        uses: .
+        with:
+          host: "127.0.0.1"
+          port: "2222"
+          username: "root"
+          key_path: "/tmp/sshtest/id_rsa"
+          source: "/tmp/sshtest/subdir/nested/stripped.txt"
+          target: "/tmp/sshtest/upload"
+          strip_components: "4"
+          timeout: "30s"
+          command_timeout: "2m"
+
+      - name: Assert file was transferred with stripped path
+        run: |
+          echo "Checking if file was transferred with stripped path..."
+          echo "Contents of upload dir:"
+          find /tmp/sshtest/upload -type f || true
+          # With strip_components=4, /tmp/sshtest/subdir/nested/stripped.txt
+          # strips 4 leading components: tmp, sshtest, subdir, nested -> stripped.txt
+          if [ ! -f "/tmp/sshtest/upload/stripped.txt" ]; then
+            echo "FAIL: stripped.txt not found directly in target directory"
+            exit 1
+          fi
+          echo "PASS: file transferred with strip_components working correctly"

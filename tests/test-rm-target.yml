@@ -1,0 +1,76 @@
+name: Test rm (remove target before upload) feature
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up fake drone-scp binary and test files
+        run: |
+          # Determine the binary name the entrypoint will request
+          PLATFORM="linux"
+          ARCH="amd64"
+          VERSION="1.8.0"
+          BINARY_NAME="drone-scp-${VERSION}-${PLATFORM}-${ARCH}"
+
+          # Create the fake release directory structure
+          RELEASE_DIR="/tmp/fake-drone-scp-releases/v${VERSION}"
+          mkdir -p "$RELEASE_DIR"
+
+          # Copy the fake drone-scp script as the binary
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-drone-scp.sh" "$RELEASE_DIR/$BINARY_NAME"
+          chmod +x "$RELEASE_DIR/$BINARY_NAME"
+
+          # Set DRONE_SCP_RELEASE_URL for subsequent steps via GITHUB_ENV
+          echo "DRONE_SCP_RELEASE_URL=file:///tmp/fake-drone-scp-releases" >> "$GITHUB_ENV"
+
+          # Create target directory with an existing file that should be removed
+          mkdir -p /tmp/sshtest/upload
+          echo "old file that should be removed" > /tmp/sshtest/upload/old_file.txt
+
+          # Create a new test file to transfer
+          echo "new file content" > /tmp/sshtest/new_file.txt
+
+          echo "Setup complete. Binary at: $RELEASE_DIR/$BINARY_NAME"
+
+      - name: Verify old file exists before transfer
+        run: |
+          if [ ! -f "/tmp/sshtest/upload/old_file.txt" ]; then
+            echo "FAIL: old_file.txt should exist before the transfer"
+            exit 1
+          fi
+          echo "PASS: old_file.txt exists before transfer (as expected)"
+
+      - id: action
+        name: Run SCP action with rm=true
+        uses: .
+        with:
+          host: "127.0.0.1"
+          port: "2222"
+          username: "root"
+          key_path: "/tmp/sshtest/id_rsa"
+          source: "/tmp/sshtest/new_file.txt"
+          target: "/tmp/sshtest/upload"
+          strip_components: "2"
+          rm: "true"
+          timeout: "30s"
+          command_timeout: "2m"
+
+      - name: Assert old file was removed and new file exists
+        run: |
+          echo "Checking if old file was removed..."
+          echo "Contents of upload dir (recursive):"
+          find /tmp/sshtest/upload -type f || true
+          if [ -f "/tmp/sshtest/upload/old_file.txt" ]; then
+            echo "FAIL: old_file.txt should have been removed by rm=true"
+            exit 1
+          fi
+          echo "Checking if new file was transferred..."
+          # With strip_components=2, /tmp/sshtest/new_file.txt -> new_file.txt
+          if [ ! -f "/tmp/sshtest/upload/new_file.txt" ]; then
+            echo "FAIL: new_file.txt not found in target directory"
+            exit 1
+          fi
+          echo "PASS: old file removed and new file transferred successfully"
